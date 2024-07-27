@@ -27,12 +27,21 @@ contract AuctionClub{
         bool settled;
     }
 
+    error NotYourNft(uint _nftId, address _owner);
+    error SelfBid();
+    error AuctionNotEnded(uint _auctionId);
+
+    event AuctionSettled(uint _auctionId);
+    event CreateAuction(address _creator, uint _auctionId, address _tokenAddress, uint _tokenId);
+
+
     uint private nextAuctionId;
     bytes constant active = "Active";
     bytes constant closed = "Closed";
     
     Auction[] internal userAuctions;
-     Auction[] activeAuctions;
+    Auction[] activeAuctions;
+    
     // storage for all auctions ever created by an address
     mapping(address => uint[]) auctions;
 
@@ -46,16 +55,10 @@ contract AuctionClub{
     function getOwner(address nftContract, uint _id) internal returns(address owner){
         IERC721 nft = IERC721(nftContract);
         owner = nft.ownerOf(_id);
-        // bytes memory payload = abi.encodeWithSignature(
-        //     "ownerOf(uint256)", _id    
-        // );
-
-        // (bool success, bytes memory data) = nftContract.call(payload);
-        // require(success, "Failed to get nft balance");
     }
 
 
-     function onERC721Received(
+    function onERC721Received(
         address operator,
         address from,
         uint256 tokenId,
@@ -76,19 +79,13 @@ contract AuctionClub{
        
     }
 
-    error NotYourNft(uint _nftId, address _owner);
-
-    event CreateAuction(address _creator, uint _auctionId, address _tokenAddress, uint _tokenId);
-
 
 // Create ERC721 auction
 
     function createAuction(address _nftContract, uint _tokenId, uint _reservePrice, uint _durationInSeconds) external{
         uint duration = _durationInSeconds;
         delete activeAuctions;
-
         // Ensure the user owns the nft they are about to auction
-
         address owner = getOwner(_nftContract, _tokenId);
         if(owner != msg.sender){
             revert NotYourNft(_tokenId, owner);
@@ -132,12 +129,9 @@ contract AuctionClub{
 
     function getActiveAuctions() public view returns(Auction[] memory){
         require(allAuctions.length > 0, "No Auctions Created yet");
-        // delete activeAuctions;
         return activeAuctions;
     }
 
-
-    error SelfBid();
 
 
 // Allow users to place bid on a particular auction using the auctionId
@@ -185,8 +179,6 @@ contract AuctionClub{
         _;
     }
 
-    error AuctionNotEnded(uint _auctionId);
-    event AuctionSettled(uint _auctionId);
 
 
 /* Only called by auction creator;
@@ -198,36 +190,47 @@ Creators can claim their funds by manually calling this function, or when the au
         if(block.timestamp >= allAuctions[_auctionId - 1].endTime){
             require(allAuctions[_auctionId - 1].settled == false, "Funds Sent Already, Check Wallet");
             allAuctions[_auctionId - 1].settled = true;
-            for(uint i = 0; i < allAuctions[_auctionId - 1].bidders.length; i++){
-                if(allAuctions[_auctionId - 1].bidders[i] == allAuctions[_auctionId - 1].topBidder){
-                    (success,) = msg.sender.call{value: allAuctions[_auctionId - 1].topBid}("");
-                }
-                else{
-                    (success,) = payable(allAuctions[_auctionId - 1].bidders[i]).call{value: allAuctions[_auctionId - 1].bids[i]}("");
-                }
-                
-            }
-            
-            emit AuctionSettled(_auctionId);
-            if(keccak256(bytes(allAuctions[_auctionId - 1].status)) != keccak256(closed)){
-                if(allAuctions[_auctionId - 1].bidders.length == 0){
-                    transferNft(allAuctions[_auctionId - 1].tokenAddress, address(this), allAuctions[_auctionId - 1].creator,
-                allAuctions[_auctionId - 1].tokenId);
-                }
-                else{
+            if (allAuctions[_auctionId - 1].bidders.length > 0){
+                for(uint i = 0; i < allAuctions[_auctionId - 1].bidders.length; i++){
+                    if(allAuctions[_auctionId - 1].bidders[i] == allAuctions[_auctionId - 1].topBidder){
+                        (success,) = msg.sender.call{value: allAuctions[_auctionId - 1].topBid}("");
                     transferNft(allAuctions[_auctionId - 1].tokenAddress, address(this), allAuctions[_auctionId - 1].topBidder,
                     allAuctions[_auctionId - 1].tokenId);
                     allAuctions[_auctionId - 1].status = "Closed";
+                    }
+                    else{
+                        (success,) = payable(allAuctions[_auctionId - 1].bidders[i]).call{value: allAuctions[_auctionId - 1].bids[i]}("");
+                    }
                 }
-            
             }
+
+            else{
+                transferNft(allAuctions[_auctionId - 1].tokenAddress, address(this), allAuctions[_auctionId - 1].creator,
+                allAuctions[_auctionId - 1].tokenId);
+            }
+            
+
+            
+            // if(keccak256(bytes(allAuctions[_auctionId - 1].status)) != keccak256(closed)){
+            //     if(allAuctions[_auctionId - 1].bidders.length == 0){
+            //         transferNft(allAuctions[_auctionId - 1].tokenAddress, address(this), allAuctions[_auctionId - 1].creator,
+            //     allAuctions[_auctionId - 1].tokenId);
+            //     }
+
+            //     else{
+            //         transferNft(allAuctions[_auctionId - 1].tokenAddress, address(this), allAuctions[_auctionId - 1].topBidder,
+            //         allAuctions[_auctionId - 1].tokenId);
+            //         allAuctions[_auctionId - 1].status = "Closed";
+            //     }
+            // }
 
             delete activeAuctions;
             for(uint i=0; i < allAuctions.length; i++){
                 if( keccak256(bytes(allAuctions[i].status)) == keccak256(active)){
                     activeAuctions.push(allAuctions[i]);
-            }
-        }
+                    }
+                }
+            emit AuctionSettled(_auctionId);
             return(success, "Auction Settled");
         }
 
