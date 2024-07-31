@@ -2,27 +2,35 @@
 pragma solidity ^0.8.17;
 
 interface IERC721{
+
     function safeTransferFrom(address from, address to, uint tokenID) external;
     function ownerOf(uint tokenId) external returns (address _owner);
     function approve(address to, uint tokenId) external;
 }
 
+interface IERC20{
+    function transferFrom(address from, address to, uint value) external returns(bool);
+    function transfer(address _to, uint _value)  external returns(bool);
+    function approve(address _spender, uint amount) external;
+}
+
+
 contract AuctionClub{
 
     struct Auction{
         address creator;
-        address[] bidders;
-        uint[] bids;
         address tokenAddress;
         address topBidder;
-        uint auctionId;
-        uint tokenId;
-        uint topBid;
-        uint duration;
+        address listingToken;
+        address[] bidders;
+        uint[] bids;
+        uint32 auctionId;
+        uint32 duration;
         uint startTime;
+        uint topBid;
         uint endTime;
+        uint tokenId;
         uint reservePrice;
-        // uint _auctionId;
         string status;
         bool settled;
     }
@@ -35,7 +43,7 @@ contract AuctionClub{
     event CreateAuction(address _creator, uint _auctionId, address _tokenAddress, uint _tokenId);
 
 
-    uint private nextAuctionId;
+    uint32 private nextAuctionId;
     bytes constant active = "Active";
     bytes constant closed = "Closed";
     
@@ -54,6 +62,7 @@ contract AuctionClub{
 
     function getOwner(address nftContract, uint _id) internal returns(address owner){
         IERC721 nft = IERC721(nftContract);
+        
         owner = nft.ownerOf(_id);
     }
 
@@ -82,14 +91,17 @@ contract AuctionClub{
 
 // Create ERC721 auction
 
-    function createAuction(address _nftContract, uint _tokenId, uint _reservePrice, uint _durationInSeconds) external{
-        uint duration = _durationInSeconds;
+    function createAuction(address _nftContract, uint _tokenId, address _listingToken, uint _reservePrice, uint32 _durationInSeconds) external{
+        uint32 duration = _durationInSeconds;
         delete activeAuctions;
         // Ensure the user owns the nft they are about to auction
         address owner = getOwner(_nftContract, _tokenId);
         if(owner != msg.sender){
             revert NotYourNft(_tokenId, owner);
         }
+
+
+
 
         // Safely transfer the NFT out of the user's wallet to this contract
         // * Requires the user approve this contract address to allow transfer of ERC721
@@ -104,13 +116,13 @@ contract AuctionClub{
         newAuction.creator = msg.sender;
         newAuction.tokenId = _tokenId;
         newAuction.auctionId = nextAuctionId;
-        // newAuction._auctionId = nextAuctionId;
+        newAuction.listingToken = _listingToken;
         newAuction.duration = duration;
         uint _startTime = block.timestamp;
         newAuction.startTime = _startTime;
         uint _endTime = _startTime + duration;
         newAuction.endTime = _endTime;
-        newAuction.tokenAddress = _nftContract;  
+        newAuction.tokenAddress = _nftContract;
         newAuction.reservePrice = _reservePrice;
         newAuction.status = "Active";
 
@@ -137,7 +149,7 @@ contract AuctionClub{
 // Allow users to place bid on a particular auction using the auctionId
 // Auction creators cannot bid on their auctions
 
-    function placeBid(uint auctionId) external payable returns(string memory){
+    function placeBid(uint auctionId, uint bidAmount) external payable returns(string memory){
         if(msg.sender == allAuctions[auctionId - 1].creator){
             revert SelfBid();
         }
@@ -145,17 +157,32 @@ contract AuctionClub{
 
         // If no prior bids on auction, ensure that the reserve price is met
         if(allAuctions[auctionId - 1].bidders.length == 0){
-            require(msg.value >= allAuctions[auctionId - 1].reservePrice, "Bid smaller than reserve price");
+            if (allAuctions[auctionId - 1].listingToken == address(0)){
+                require(bidAmount >= allAuctions[auctionId - 1].reservePrice, "Bid smaller than reserve price");
+            }
         }
         // Ensure that bid is greater than current top bid otherwise 
         else{
-            require(msg.value > allAuctions[auctionId -1].topBid, "Bid too small");
+            require(bidAmount > allAuctions[auctionId -1].topBid, "Bid too small");
         }
-    
+
+        if (allAuctions[auctionId - 1].listingToken == address(0)){
         allAuctions[auctionId - 1].bidders.push(msg.sender);
+        require(msg.value >= bidAmount, "InsufficientBid");
         allAuctions[auctionId - 1].bids.push(msg.value);
         allAuctions[auctionId - 1].topBid = msg.value;
         allAuctions[auctionId - 1].topBidder = msg.sender;
+        }else{
+
+            allAuctions[auctionId - 1].bidders.push(msg.sender);
+            IERC20 token = IERC20(allAuctions[auctionId -1].listingToken);
+            bool success = token.transferFrom(msg.sender, address(this), bidAmount);
+            require(success);
+            allAuctions[auctionId - 1].bids.push(bidAmount);
+            allAuctions[auctionId - 1].topBid = bidAmount;
+            allAuctions[auctionId - 1].topBidder = msg.sender;
+        }
+        
         delete activeAuctions;
         for(uint i=0; i < allAuctions.length; i++){
             if(keccak256(bytes(allAuctions[i].status)) == keccak256(active)){
@@ -193,13 +220,32 @@ Creators can claim their funds by manually calling this function, or when the au
             if (allAuctions[_auctionId - 1].bidders.length > 0){
                 for(uint i = 0; i < allAuctions[_auctionId - 1].bidders.length; i++){
                     if(allAuctions[_auctionId - 1].bidders[i] == allAuctions[_auctionId - 1].topBidder){
-                        (success,) = msg.sender.call{value: allAuctions[_auctionId - 1].topBid}("");
+                        if (allAuctions[_auctionId - 1].listingToken == address(0)){
+                            (success,) = msg.sender.call{value: allAuctions[_auctionId - 1].topBid}("");
+                        }
+                        else{
+                            IERC20 token = IERC20(allAuctions[_auctionId - 1].listingToken);
+                            bool _success = token.transfer(msg.sender, allAuctions[_auctionId - 1].topBid);
+                            require(_success, "Couldn't transfer token to creator");
+                        }
+                        
                     transferNft(allAuctions[_auctionId - 1].tokenAddress, address(this), allAuctions[_auctionId - 1].topBidder,
                     allAuctions[_auctionId - 1].tokenId);
                     allAuctions[_auctionId - 1].status = "Closed";
                     }
+
                     else{
-                        (success,) = payable(allAuctions[_auctionId - 1].bidders[i]).call{value: allAuctions[_auctionId - 1].bids[i]}("");
+                        if (allAuctions[_auctionId - 1].listingToken == address(0)){
+                            (success,) = payable(allAuctions[_auctionId - 1].bidders[i]).call{value: allAuctions[_auctionId - 1].bids[i]}("");
+                        }
+                        else{
+                            IERC20 token = IERC20(allAuctions[_auctionId - 1].listingToken);
+                            bool _success = token.transfer(msg.sender, allAuctions[_auctionId - 1].bids[i]);
+                            require(_success, "Couldn't refund user");
+                        }
+
+                        
+                        
                     }
                 }
             }
