@@ -1,4 +1,4 @@
-A skmple contract for managing ERC721 auctions.
+A simple contract for managing ERC721 auctions.
 Key features includes;
 > Multiple concurrent auctions management
 > 
