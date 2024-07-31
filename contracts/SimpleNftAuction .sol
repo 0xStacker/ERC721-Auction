@@ -229,9 +229,9 @@ Creators can claim their funds by manually calling this function, or when the au
                             require(_success, "Couldn't transfer token to creator");
                         }
                         
-                    transferNft(allAuctions[_auctionId - 1].tokenAddress, address(this), allAuctions[_auctionId - 1].topBidder,
-                    allAuctions[_auctionId - 1].tokenId);
-                    allAuctions[_auctionId - 1].status = "Closed";
+                        transferNft(allAuctions[_auctionId - 1].tokenAddress, address(this), allAuctions[_auctionId - 1].topBidder,
+                        allAuctions[_auctionId - 1].tokenId);
+                        allAuctions[_auctionId - 1].status = "Closed";
                     }
 
                     else{
@@ -240,7 +240,7 @@ Creators can claim their funds by manually calling this function, or when the au
                         }
                         else{
                             IERC20 token = IERC20(allAuctions[_auctionId - 1].listingToken);
-                            bool _success = token.transfer(msg.sender, allAuctions[_auctionId - 1].bids[i]);
+                            bool _success = token.transfer(allAuctions[_auctionId - 1].bidders[i], allAuctions[_auctionId - 1].bids[i]);
                             require(_success, "Couldn't refund user");
                         }
 
